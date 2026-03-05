@@ -1,7 +1,8 @@
 import os
 import io
 from typing import List
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+from PIL import Image, ImageDraw, ImageFilter
 import imageio.v2 as imageio
 
 try:
@@ -10,84 +11,56 @@ try:
 except Exception:
     HAS_CAIROSVG = False
 
+
 # -----------------------------
-# CONFIG (tweak these)
+# CONFIG
 # -----------------------------
 ICONS_DIR = "icons"
 OUTPUT_GIF = "ticker.gif"
 
-# Render at 2x then downscale for crispness
-SCALE = 2
+W, H = 900, 140          # higher output resolution (GitHub still ok)
+SCALE = 4                # render 4x then downscale -> crisp
+FPS = 30
+SECONDS_PER_LOOP = 7     # slower, smoother
 
-W, H = 850, 110                 # final size (GitHub friendly)
-FPS = 30                        # smoother motion
-SECONDS_PER_LOOP = 6            # how long one full cycle takes
-
-ICON_SIZE = 40
-GAP = 18
-PADDING_X = 18
+ICON_TILE = 62           # tile size (final size before SCALE)
+ICON_PAD = 10            # padding inside tile
+GAP = 18                 # gap between tiles
 
 FRAME_COLOR = (70, 70, 70)
-BOARD_BG = (12, 12, 12)
-LED_ORANGE = (255, 150, 50)
-LED_DIM = (55, 25, 10)
+BOARD_BG = (10, 10, 10)
+TILE_BG = (28, 28, 28)
 
 SUPPORTED_EXTS = (".png", ".svg", ".webp", ".jpg", ".jpeg")
 
-LABEL_OVERRIDES = {
-    "csharp": "C#",
-    "dotnet": ".NET",
-    "nodedotjs": "NodeJS",
-    "nextdotjs": "NextJS",
-    "googlecloud": "GCP",
-    "amazonaws": "AWS",
-}
 
 # -----------------------------
-# HELPERS
+# ICON LOADING
 # -----------------------------
-def load_font(size: int):
-    candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/Library/Fonts/Arial.ttf",
-        "C:\\Windows\\Fonts\\consola.ttf",
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return ImageFont.truetype(p, size=size)
-    return ImageFont.load_default()
-
 def list_icon_files(folder: str) -> List[str]:
     if not os.path.isdir(folder):
         raise FileNotFoundError(f"Icons folder not found: {folder}")
 
     files = []
     for name in os.listdir(folder):
-        if name.startswith("."):  # ignore .DS_Store etc
+        if name.startswith("."):
             continue
         if name.lower().endswith(SUPPORTED_EXTS):
             files.append(os.path.join(folder, name))
 
     if not files:
-        raise FileNotFoundError(f"No icons found in {folder} (supported: {SUPPORTED_EXTS})")
+        raise FileNotFoundError(f"No icon files found in {folder}/")
 
     files.sort(key=lambda p: os.path.splitext(os.path.basename(p))[0].lower())
     return files
 
-def filename_to_label(fp: str) -> str:
-    base = os.path.splitext(os.path.basename(fp))[0]
-    key = base.lower()
-    if key in LABEL_OVERRIDES:
-        return LABEL_OVERRIDES[key]
-    return base[:1].upper() + base[1:]
 
 def open_icon(fp: str, size: int) -> Image.Image:
     ext = os.path.splitext(fp)[1].lower()
 
     if ext == ".svg":
         if not HAS_CAIROSVG:
-            raise RuntimeError("SVG found but cairosvg missing. Install: pip install cairosvg")
+            raise RuntimeError("SVG icons found but cairosvg not installed. Run: pip install cairosvg")
         with open(fp, "rb") as f:
             svg_bytes = f.read()
         png_bytes = cairosvg.svg2png(bytestring=svg_bytes, output_width=size, output_height=size)
@@ -96,72 +69,58 @@ def open_icon(fp: str, size: int) -> Image.Image:
     img = Image.open(fp).convert("RGBA")
     return img.resize((size, size), Image.LANCZOS)
 
-def make_tile(icon: Image.Image, tile_size: int) -> Image.Image:
+
+# -----------------------------
+# RENDERING
+# -----------------------------
+def make_icon_tile(icon: Image.Image, tile_size: int, pad: int) -> Image.Image:
     tile = Image.new("RGBA", (tile_size, tile_size), (0, 0, 0, 0))
     d = ImageDraw.Draw(tile)
-    d.rounded_rectangle([0, 0, tile_size, tile_size], radius=10, fill=(25, 25, 25, 255))
 
-    # slightly smaller icon on tile
-    icon2 = icon.resize((int(tile_size * 0.72), int(tile_size * 0.72)), Image.LANCZOS)
+    r = max(10, tile_size // 6)
+    d.rounded_rectangle([0, 0, tile_size, tile_size], radius=r, fill=(*TILE_BG, 255))
+
+    target = tile_size - pad * 2
+
+    # Fit icon inside, preserve detail
+    icon2 = icon.resize((target, target), Image.LANCZOS)
+
     ox = (tile_size - icon2.width) // 2
     oy = (tile_size - icon2.height) // 2
     tile.alpha_composite(icon2, (ox, oy))
     return tile
 
-def led_text_img(text: str, font: ImageFont.ImageFont) -> Image.Image:
-    tmp = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
-    d = ImageDraw.Draw(tmp)
-    bbox = d.textbbox((0, 0), text, font=font)
-    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d2 = ImageDraw.Draw(img)
-    d2.text((0, 0), text, font=font, fill=LED_DIM)
-    d2.text((0, 0), text, font=font, fill=LED_ORANGE)
+def build_strip(icon_files: List[str], scale: int):
+    tile = ICON_TILE * scale
+    pad = ICON_PAD * scale
+    gap = GAP * scale
 
-    # micro-blur to mimic LED glow (kept subtle for crispness)
-    return img.filter(ImageFilter.GaussianBlur(radius=0.25))
-
-def build_strip(icon_files: List[str], scale: int) -> Image.Image:
-    font = load_font(26 * scale)
-    parts = []
-    total_w = PADDING_X * scale
-
-    header = led_text_img("TECH STACK  ", font)
-    parts.append(("img", header))
-    total_w += header.width + GAP * scale
-
+    tiles = []
     for fp in icon_files:
-        label = filename_to_label(fp)
+        # render each icon at best detail for the tile
+        icon = open_icon(fp, size=(tile - pad * 2))
+        tiles.append(make_icon_tile(icon, tile_size=tile, pad=pad))
 
-        icon = open_icon(fp, ICON_SIZE * scale)
-        tile = make_tile(icon, ICON_SIZE * scale)
-        label_img = led_text_img(label, font)
+    strip_h = tile
+    cycle_w = (len(tiles) * tile) + ((len(tiles) - 1) * gap)
 
-        parts.append(("icon", tile))
-        parts.append(("img", label_img))
-
-        total_w += (ICON_SIZE * scale) + (10 * scale) + label_img.width + (GAP * scale)
-
-    strip_h = max(ICON_SIZE * scale, 32 * scale) + (10 * scale)
-
-    # ✅ Duplicate content for seamless looping
-    strip_w = total_w * 2
-    strip = Image.new("RGBA", (strip_w, strip_h), (0, 0, 0, 0))
+    # duplicate once for seamless scroll
+    strip = Image.new("RGBA", (cycle_w * 2, strip_h), (0, 0, 0, 0))
 
     def paste_once(x0: int):
-        x = x0 + (PADDING_X * scale)
-        y_mid = strip_h // 2
-        for kind, img in parts:
-            strip.alpha_composite(img, (x, y_mid - img.height // 2))
-            x += img.width + ((10 * scale) if kind == "icon" else (GAP * scale))
+        x = x0
+        for t in tiles:
+            strip.alpha_composite(t, (x, 0))
+            x += tile + gap
 
     paste_once(0)
-    paste_once(total_w)
+    paste_once(cycle_w)
 
-    return strip, total_w  # return single-cycle width (total_w)
+    return strip, cycle_w
 
-def frame_with_board(strip: Image.Image, offset_x: int, scale: int) -> Image.Image:
+
+def render_frame(strip: Image.Image, offset_x: int, scale: int) -> Image.Image:
     WW, HH = W * scale, H * scale
     base = Image.new("RGB", (WW, HH), FRAME_COLOR)
 
@@ -169,18 +128,37 @@ def frame_with_board(strip: Image.Image, offset_x: int, scale: int) -> Image.Ima
     y = (inner.height - strip.height) // 2
     inner.alpha_composite(strip, (offset_x, y))
 
-    # scanlines
+    # subtle scanlines
     scan = Image.new("RGBA", (inner.width, inner.height), (0, 0, 0, 0))
     sd = ImageDraw.Draw(scan)
-    for yy in range(0, inner.height, 4 * scale):
-        sd.rectangle([0, yy, inner.width, yy + max(1, scale)], fill=(0, 0, 0, 30))
+    for yy in range(0, inner.height, 6 * scale):
+        sd.rectangle([0, yy, inner.width, yy + max(1, scale)], fill=(0, 0, 0, 20))
     inner = Image.alpha_composite(inner, scan)
 
-    inner_rgb = inner.convert("RGB").filter(ImageFilter.UnsharpMask(radius=1.2 * scale, percent=120, threshold=3))
+    inner_rgb = inner.convert("RGB").filter(
+        ImageFilter.UnsharpMask(radius=1.2 * scale, percent=160, threshold=2)
+    )
+
     base.paste(inner_rgb, (7 * scale, 7 * scale))
 
-    # ✅ Downscale to final size for crispness
+    # downscale to final
     return base.resize((W, H), Image.LANCZOS)
+
+
+# -----------------------------
+# GIF EXPORT (FULL COLOR)
+# -----------------------------
+def make_global_palette(frames_rgb: List[Image.Image]) -> Image.Image:
+    # Build a single palette from a representative frame to preserve color consistency
+    # (frame 0 is usually fine; you can also merge a few frames if you want)
+    pal = frames_rgb[0].convert("P", palette=Image.Palette.ADAPTIVE, colors=256)
+    return pal
+
+
+def apply_palette(frame_rgb: Image.Image, palette_img: Image.Image) -> Image.Image:
+    # Apply the same palette to every frame; avoid dithering to keep logos cleaner
+    return frame_rgb.quantize(palette=palette_img, dither=Image.Dither.NONE)
+
 
 def main():
     icon_files = list_icon_files(ICONS_DIR)
@@ -188,26 +166,29 @@ def main():
 
     strip, cycle_w = build_strip(icon_files, SCALE)
 
-    frames = int(FPS * SECONDS_PER_LOOP)
+    frames_count = int(FPS * SECONDS_PER_LOOP)
 
-    # ✅ Seamless: offset is modulo cycle_w (single cycle width)
-    frames_out = []
-    for i in range(frames):
-        t = i / frames
-        shift = -int(t * cycle_w)  # right -> left over exactly one cycle
-        frames_out.append(frame_with_board(strip, shift, SCALE))
+    # render in RGB first (high quality)
+    frames_rgb = []
+    for i in range(frames_count):
+        t = i / frames_count
+        shift = -int(t * cycle_w)  # exactly one cycle => seamless loop
+        frames_rgb.append(render_frame(strip, shift, SCALE))
 
-    # ✅ Avoid duplicate last frame == first frame (prevents “pause” feel)
-    # (we already render exactly one loop; no need to repeat the first frame)
+    # global palette to keep color stable
+    palette_img = make_global_palette(frames_rgb)
+    frames_p = [apply_palette(f, palette_img) for f in frames_rgb]
+
+    # write animated gif (infinite loop)
     imageio.mimsave(
         OUTPUT_GIF,
-        frames_out,
+        frames_p,
         format="GIF",
         duration=1.0 / FPS,
-        loop=0,  # infinite
+        loop=0
     )
 
-    print(f"✅ Wrote {OUTPUT_GIF} ({len(frames_out)} frames, {FPS} fps, seamless loop)")
+    print(f"✅ Wrote {OUTPUT_GIF} (color, icons-only, seamless loop)")
 
 if __name__ == "__main__":
     main()
