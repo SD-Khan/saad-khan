@@ -8,6 +8,15 @@ from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 import cairosvg
 
+def force_svg_fill_white(svg_bytes: bytes) -> bytes:
+    """
+    Simple Icons SVGs often use `fill="currentColor"`.
+    We replace it with white for consistent dark-mode rendering.
+    """
+    s = svg_bytes.decode("utf-8", errors="ignore")
+    s = s.replace('fill="currentColor"', 'fill="#ffffff"')
+    return s.encode("utf-8")
+
 # ----------------------------
 # Config
 # ----------------------------
@@ -51,6 +60,10 @@ TECH = [
     ("ALB", "awselasticloadbalancing"),
     ("EMR", "awselasticmapreduce"),
     ("Step Functions", "awsstepfunctions"),
+    ("DynamoDB", "awsdynamodb"),
+    ("RDS", "awsrds"),
+    ("EKS", "awsecs"),
+    {"ApiGateway", "apigateway"}
 
     # GCP
     ("GCP", "googlecloud"),
@@ -62,6 +75,13 @@ TECH = [
     ("Fivetran", "fivetran"),
     ("Shopify", "shopify"),
 
+    # Databases
+    {"PostgreSQL", "postgresql"},
+    {"Athena", "athena"},
+    {"Redshift", "redshift"},
+    {"Qdrant", "qdrant"},
+    {"Supabase", "supabase"},
+
     # AI
     ("Llama", "meta"),
     ("Ollama", "ollama"),
@@ -69,7 +89,7 @@ TECH = [
 ]
 
 # Simple Icons CDN SVG (stable)
-ICON_URL = "https://cdn.simpleicons.org/{slug}/ffffff"
+ICON_URL = "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/{slug}.svg"
 
 # ----------------------------
 # Helpers
@@ -125,7 +145,7 @@ def build_strip() -> Image.Image:
 
     pills = []
     for label, slug in TECH:
-        svg = download_svg(slug)
+        svg = force_svg_fill_white(download_svg(slug))
         icon = svg_to_png(svg, ICON_SIZE)
 
         text_w, text_h = measure_text(dtmp, label, font)
