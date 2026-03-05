@@ -122,7 +122,7 @@ Current:
 ## 🐍 Contribution Snake (enable once workflow is added)
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/SD-Khan/SD-Khan/output/github-contribution-grid-snake.svg" />
+  <img src="https://raw.githubusercontent.com/SD-Khan/SD-Khan/main/assets/github-contribution-grid-snake.svg" />
 </p>
 
 > This requires adding the snake GitHub Action workflow and enabling the `output` branch.
