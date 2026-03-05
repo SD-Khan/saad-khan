@@ -1,242 +1,223 @@
 import os
-import math
-import time
-import json
-import urllib.request
-from io import BytesIO
+import io
+from typing import List, Tuple
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+import imageio.v2 as imageio
 
-from PIL import Image, ImageDraw, ImageFont
-import cairosvg
+try:
+    import cairosvg
+    HAS_CAIROSVG = True
+except Exception:
+    HAS_CAIROSVG = False
 
-def force_svg_fill_white(svg_bytes: bytes) -> bytes:
-    """
-    Simple Icons SVGs often use `fill="currentColor"`.
-    We replace it with white for consistent dark-mode rendering.
-    """
-    s = svg_bytes.decode("utf-8", errors="ignore")
-    s = s.replace('fill="currentColor"', 'fill="#ffffff"')
-    return s.encode("utf-8")
-
-# ----------------------------
+# -----------------------------
 # Config
-# ----------------------------
-OUTPUT_GIF = "assets/tech-ticker.gif"
+# -----------------------------
+OUTPUT_GIF = "ticker.gif"
 
-# Canvas config
-W = 1200          # width of ticker
-H = 140           # height of ticker
-FPS = 24          # frames per second
-DURATION_SEC = 10 # duration for one full loop
-PX_PER_FRAME = 4  # scroll speed
+# Folder containing icon files (png/svg/webp/jpg)
+ICONS_DIR = "icons"
 
-# Style
-BG = (10, 12, 18)           # near-black (GitHub dark friendly)
-FG = (226, 232, 240)        # near-white
-PILL_BG = (24, 27, 36)      # pill background
-PILL_BORDER = (45, 55, 72)  # subtle border
-LABEL_COLOR = (226, 232, 240)
+# Final GIF size (good for GitHub readme)
+W, H = 850, 110
 
-ICON_SIZE = 28
-PILL_H = 44
-PILL_PAD_X = 14
-PILL_GAP = 14
+FPS = 25
+DURATION_SEC = 10
+FRAMES = FPS * DURATION_SEC
 
-# List of (label, simpleicons slug)
-# Use Simple Icons slugs: https://simpleicons.org/
-TECH = [
-    # Languages / Runtime
-    ("Java", "java"),
-    ("Python", "python"),
-    ("C Sharp", "csharp"),
-    ("DotNet", "dotnet"),
-    ("NodeJS", "nodedotjs"),
-    ("NextJS", "nextdotjs"),
+ICON_SIZE = 40
+GAP = 18
+PADDING_X = 18
 
-    # Cloud / AWS
-    ("AWS", "amazonaws"),
-    ("ECS", "amazonecs"),
-    ("S3", "amazons3"),
-    ("Lambda", "awslambda"),
-    ("ALB", "awselasticloadbalancing"),
-    ("EMR", "awselasticmapreduce"),
-    ("Step Functions", "awsstepfunctions"),
-    ("DynamoDB", "awsdynamodb"),
-    ("RDS", "awsrds"),
-    ("EKS", "awsecs"),
-    {"ApiGateway", "apigateway"},
+# LED Board style
+FRAME_COLOR = (70, 70, 70)
+BOARD_BG = (12, 12, 12)
+LED_ORANGE = (255, 150, 50)
+LED_DIM = (55, 25, 10)
 
-    # GCP
-    ("GCP", "googlecloud"),
+SUPPORTED_EXTS = (".png", ".svg", ".webp", ".jpg", ".jpeg")
 
-    # Data
-    ("Spark", "apachespark"),
-    ("Snowflake", "snowflake"),
-    ("DBT", "dbt"),
-    ("Fivetran", "fivetran"),
-    ("Shopify", "shopify"),
+# Optional mapping from filename -> display label
+# Example: "nodedotjs" -> "NodeJS"
+LABEL_OVERRIDES = {
+    "csharp": "C#",
+    "dotnet": ".NET",
+    "nodedotjs": "NodeJS",
+    "nextdotjs": "NextJS",
+    "googlecloud": "GCP",
+    "amazonaws": "AWS",
+}
 
-    # Databases
-    {"PostgreSQL", "postgresql"},
-    {"Athena", "athena"},
-    {"Redshift", "redshift"},
-    {"Qdrant", "qdrant"},
-    {"Supabase", "supabase"},
 
-    # AI
-    ("Llama", "meta"),
-    ("Ollama", "ollama"),
-    ("Qwen", "alibabacloud"),
-]
-
-# Simple Icons CDN SVG (stable)
-ICON_URL = "https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/{slug}.svg"
-
-# ----------------------------
+# -----------------------------
 # Helpers
-# ----------------------------
-def ensure_dirs():
-    os.makedirs("assets", exist_ok=True)
-    os.makedirs("tools/.cache/icons", exist_ok=True)
-
-def download_svg(slug: str) -> bytes:
-    cache_path = f"tools/.cache/icons/{slug}.svg"
-    if os.path.exists(cache_path):
-        with open(cache_path, "rb") as f:
-            return f.read()
-
-    # Multiple sources (fallback)
-    urls = [
-        f"https://cdn.jsdelivr.net/npm/simple-icons@v11/icons/{slug}.svg",
-        f"https://unpkg.com/simple-icons@v11/icons/{slug}.svg",
-        f"https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/{slug}.svg",
-    ]
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; GitHubActions; +https://github.com)",
-        "Accept": "image/svg+xml,text/plain,*/*",
-    }
-
-    last_err = None
-    for url in urls:
-        try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = resp.read()
-            with open(cache_path, "wb") as f:
-                f.write(data)
-            return data
-        except Exception as e:
-            last_err = e
-
-    raise last_err
-
-def svg_to_png(svg_bytes: bytes, size: int) -> Image.Image:
-    png_bytes = cairosvg.svg2png(bytestring=svg_bytes, output_width=size, output_height=size)
-    img = Image.open(BytesIO(png_bytes)).convert("RGBA")
-    return img
-
-def load_font(size: int) -> ImageFont.ImageFont:
-    # GitHub Actions ubuntu has DejaVu fonts
-    # Fallback to default if missing
+# -----------------------------
+def load_font(size: int):
     candidates = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/Library/Fonts/Arial.ttf",
+        "C:\\Windows\\Fonts\\consola.ttf",
     ]
-    for path in candidates:
-        if os.path.exists(path):
-            return ImageFont.truetype(path, size)
+    for p in candidates:
+        if os.path.exists(p):
+            return ImageFont.truetype(p, size=size)
     return ImageFont.load_default()
 
-def measure_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont):
-    bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0], bbox[3] - bbox[1]
 
-def draw_pill(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int, r: int):
-    # Rounded rectangle
-    draw.rounded_rectangle([x, y, x + w, y + h], radius=r, fill=PILL_BG, outline=PILL_BORDER, width=1)
+def list_icon_files(folder: str) -> List[str]:
+    if not os.path.isdir(folder):
+        raise FileNotFoundError(f"Icons folder not found: {folder}")
 
-def build_strip() -> Image.Image:
-    font = load_font(18)
-    # temporary canvas for measurement
-    tmp = Image.new("RGBA", (10, 10), (0, 0, 0, 0))
-    dtmp = ImageDraw.Draw(tmp)
+    files = []
+    for name in os.listdir(folder):
+        if name.lower().endswith(SUPPORTED_EXTS):
+            files.append(os.path.join(folder, name))
 
-    pills = []
-    for label, slug in TECH:
-        svg = force_svg_fill_white(download_svg(slug))
-        icon = svg_to_png(svg, ICON_SIZE)
+    if not files:
+        raise FileNotFoundError(f"No icon files found in {folder} with extensions: {SUPPORTED_EXTS}")
 
-        text_w, text_h = measure_text(dtmp, label, font)
-        pill_w = PILL_PAD_X * 2 + ICON_SIZE + 10 + text_w
-        pill = Image.new("RGBA", (pill_w, PILL_H), (0, 0, 0, 0))
-        dp = ImageDraw.Draw(pill)
-        draw_pill(dp, 0, 0, pill_w, PILL_H, r=14)
+    # Sort for stable output: by filename (without ext)
+    files.sort(key=lambda p: os.path.splitext(os.path.basename(p))[0].lower())
+    return files
 
-        # icon
-        pill.paste(icon, (PILL_PAD_X, (PILL_H - ICON_SIZE) // 2), icon)
 
-        # label
-        tx = PILL_PAD_X + ICON_SIZE + 10
-        ty = (PILL_H - text_h) // 2 - 1
-        dp.text((tx, ty), label, font=font, fill=LABEL_COLOR)
-        pills.append(pill)
+def filename_to_label(fp: str) -> str:
+    base = os.path.splitext(os.path.basename(fp))[0]
+    key = base.lower()
 
-    # Concatenate pills into one long strip
-    strip_w = sum(p.size[0] for p in pills) + PILL_GAP * (len(pills) - 1)
-    strip_h = H
+    if key in LABEL_OVERRIDES:
+        return LABEL_OVERRIDES[key]
+
+    # default: "apachespark" -> "Apachespark" (simple fallback)
+    # You can improve this if you want (e.g., split words), but for logos it's usually fine.
+    return base[:1].upper() + base[1:]
+
+
+def open_icon(fp: str, size: int) -> Image.Image:
+    ext = os.path.splitext(fp)[1].lower()
+
+    if ext == ".svg":
+        if not HAS_CAIROSVG:
+            raise RuntimeError("Found SVG icons but cairosvg is not installed. Run: pip install cairosvg")
+        png_bytes = cairosvg.svg2png(url=fp, output_width=size, output_height=size)
+        return Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+
+    # bitmap
+    img = Image.open(fp).convert("RGBA")
+    return img.resize((size, size), Image.LANCZOS)
+
+
+def make_tile(icon: Image.Image, tile_size: int) -> Image.Image:
+    tile = Image.new("RGBA", (tile_size, tile_size), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+
+    # rounded dark tile
+    radius = 10
+    d.rounded_rectangle([0, 0, tile_size, tile_size], radius=radius, fill=(25, 25, 25, 255))
+
+    # center icon (slightly smaller)
+    icon2 = icon.resize((int(tile_size * 0.72), int(tile_size * 0.72)), Image.LANCZOS)
+    ox = (tile_size - icon2.width) // 2
+    oy = (tile_size - icon2.height) // 2
+    tile.alpha_composite(icon2, (ox, oy))
+    return tile
+
+
+def led_text_img(text: str, font: ImageFont.ImageFont) -> Image.Image:
+    tmp = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tmp)
+    bbox = d.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d2 = ImageDraw.Draw(img)
+
+    # dim underlayer + bright layer
+    d2.text((0, 0), text, font=font, fill=LED_DIM)
+    d2.text((0, 0), text, font=font, fill=LED_ORANGE)
+    return img
+
+
+def build_strip(icon_files: List[str]) -> Image.Image:
+    font = load_font(26)
+
+    parts: List[Tuple[str, Image.Image]] = []
+    total_w = PADDING_X
+
+    # header
+    header = led_text_img("TECH STACK  ", font)
+    parts.append(("img", header))
+    total_w += header.width + GAP
+
+    for fp in icon_files:
+        label = filename_to_label(fp)
+
+        icon = open_icon(fp, ICON_SIZE)
+        tile = make_tile(icon, ICON_SIZE)
+        label_img = led_text_img(label, font)
+
+        parts.append(("icon", tile))
+        parts.append(("img", label_img))
+
+        total_w += ICON_SIZE + 10 + label_img.width + GAP
+
+    strip_h = max(ICON_SIZE, 32) + 10
+
+    # duplicate once for seamless loop
+    strip_w = total_w * 2
     strip = Image.new("RGBA", (strip_w, strip_h), (0, 0, 0, 0))
 
-    x = 0
-    y = (strip_h - PILL_H) // 2
-    for i, p in enumerate(pills):
-        strip.paste(p, (x, y), p)
-        x += p.size[0] + PILL_GAP
+    def paste_once(x0: int):
+        x = x0 + PADDING_X
+        y_mid = strip_h // 2
+        for kind, img in parts:
+            strip.alpha_composite(img, (x, y_mid - img.height // 2))
+            x += img.width + (10 if kind == "icon" else GAP)
+
+    paste_once(0)
+    paste_once(total_w)
 
     return strip
 
-def make_frames(strip: Image.Image):
-    frames = []
-    total_frames = int(FPS * DURATION_SEC)
-    # To loop seamlessly, duplicate strip and scroll across one full strip width
-    strip_w = strip.size[0]
-    combined = Image.new("RGBA", (strip_w * 2, H), (0, 0, 0, 0))
-    combined.paste(strip, (0, 0), strip)
-    combined.paste(strip, (strip_w, 0), strip)
 
-    for i in range(total_frames):
-        offset = (i * PX_PER_FRAME) % strip_w
-        frame = Image.new("RGB", (W, H), BG)
-        # Crop a window from combined strip
-        window = combined.crop((offset, 0, offset + W, H))
-        frame.paste(window, (0, 0), window)
-        frames.append(frame)
+def frame_with_board(scrolling_strip: Image.Image, offset_x: int) -> Image.Image:
+    base = Image.new("RGB", (W, H), FRAME_COLOR)
+    inner = Image.new("RGB", (W - 14, H - 14), BOARD_BG).convert("RGBA")
 
-    return frames, total_frames
+    y = (inner.height - scrolling_strip.height) // 2
+    inner.alpha_composite(scrolling_strip, (offset_x, y))
 
-def save_gif(frames, total_frames):
-    os.makedirs(os.path.dirname(OUTPUT_GIF), exist_ok=True)
-    duration_ms = int(1000 / FPS)
+    # scanlines
+    scan = Image.new("RGBA", (inner.width, inner.height), (0, 0, 0, 0))
+    sd = ImageDraw.Draw(scan)
+    for yy in range(0, inner.height, 4):
+        sd.rectangle([0, yy, inner.width, yy + 1], fill=(0, 0, 0, 35))
+    inner = Image.alpha_composite(inner, scan)
 
-    # Convert to palette mode for smaller gif
-    pal_frames = []
-    for f in frames:
-        pal_frames.append(f.convert("P", palette=Image.Palette.ADAPTIVE, colors=256))
+    inner_rgb = inner.convert("RGB").filter(ImageFilter.UnsharpMask(radius=1.2, percent=120, threshold=3))
+    base.paste(inner_rgb, (7, 7))
+    return base
 
-    pal_frames[0].save(
-        OUTPUT_GIF,
-        save_all=True,
-        append_images=pal_frames[1:],
-        optimize=False,
-        duration=duration_ms,
-        loop=0
-    )
 
 def main():
-    ensure_dirs()
-    strip = build_strip()
-    frames, total_frames = make_frames(strip)
-    save_gif(frames, total_frames)
-    print(f"Generated {OUTPUT_GIF} with {total_frames} frames")
+    icon_files = list_icon_files(ICONS_DIR)
+    print(f"Found {len(icon_files)} icons in {ICONS_DIR}/")
+
+    strip = build_strip(icon_files)
+
+    loop_w = strip.width // 2
+    px_per_frame = loop_w / FRAMES
+
+    frames = []
+    for i in range(FRAMES):
+        shift = -int(i * px_per_frame)  # right -> left
+        frames.append(frame_with_board(strip, shift))
+
+    imageio.mimsave(OUTPUT_GIF, frames, format="GIF", duration=1.0 / FPS)
+    print(f"✅ Wrote {OUTPUT_GIF} ({FRAMES} frames)")
+
 
 if __name__ == "__main__":
     main()

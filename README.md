@@ -1,8 +1,8 @@
 # saad-khan<img width="100%" src="https://capsule-render.vercel.app/api?type=waving&color=0:111827,100:2563eb&height=210&section=header&text=Saad%20Khan&fontSize=46&fontColor=ffffff&animation=fadeIn&fontAlignY=35&desc=Software%20Architect%20%7C%20AI%20Systems%20Architect%20%7C%20Cloud%20Platforms&descAlignY=62&descSize=18" />
 <p align="center">
   <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&size=18&pause=1000&center=true&vCenter=true&width=850&lines=AI+%26+Data+Platform+Architect;Cloud+Native+%7C+AWS+%7C+GCP+%7C+Snowflake;RAG+Systems+%7C+ETL+Pipelines+%7C+Distributed+Systems;Building+tools+%26+products+as+a+solo+founder" />
-  <p align="center">
-  <img src="./assets/tech-ticker.gif" alt="Tech stack ticker" width="100%" />
+<p align="center">
+  <img src="https://raw.githubusercontent.com/SD-Khan/SD-Khan/main/tools/ticker.gif" width="850" />
 </p>
 </p>
 <p align="center">
