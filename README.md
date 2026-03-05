@@ -113,24 +113,19 @@ Current:
 
 ---
 
-## 📈 GitHub Stats
-
-<p align="center">
-  <img src="https://github-readme-stats.vercel.app/api?username=SD-Khan&show_icons=true&hide_title=true" />
-</p>
-
----
-
-## 🐍 Contribution Snake (enable once workflow is added)
+## 🐍 Contribution Snake
 
 <img src="https://raw.githubusercontent.com/SD-Khan/SD-Khan/output/github-contribution-grid-snake.svg" />
 
-> This requires adding the snake GitHub Action workflow and enabling the `output` branch.
+<p align="center">
+  <img src="https://streak-stats.demolab.com/?user=SD-Khan&theme=github-dark&hide_border=true" />
+</p>
 
 ---
 
 ## 🤝 Connect
 
 - Email: saad.khan5891@gmail.com
-- LinkedIn: add-your-link-here
+- Whatsapp: +923333405593
+- LinkedIn: https://www.linkedin.com/in/saad-khan-1a6a12b4
 
